@@ -5545,7 +5545,7 @@ DESCR("jsonpath query");
 DATA(insert OID =  6056 (  _jsonpath_exists		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 16 "3802 6050 3802" _null_ _null_ _null_ _null_ _null_ jsonb_jsonpath_exists3 _null_ _null_ _null_ ));
 DESCR("jsonpath exists test");
 DATA(insert OID =  6057 (  _jsonpath_query		PGNSP PGUID 12 1 1000 0 0 f f f f t t i s 3 0 3802 "3802 6050 3802" _null_ _null_ _null_ _null_ _null_ jsonb_jsonpath_query3 _null_ _null_ _null_ ));
-DESCR("jsonpath query");
+DESCR("jsonpath object test");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
