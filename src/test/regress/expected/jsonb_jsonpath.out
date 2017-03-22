@@ -1138,8 +1138,6 @@ select jsonb 'null' @* '$.datetime()';
 ERROR:  Invalid argument for SQL/JSON datetime function
 select jsonb 'true' @* '$.datetime()';
 ERROR:  Invalid argument for SQL/JSON datetime function
-select jsonb '1' @* '$.datetime()';
-ERROR:  Invalid argument for SQL/JSON datetime function
 select jsonb '[]' @* '$.datetime()';
  ?column? 
 ----------
@@ -1151,6 +1149,25 @@ select jsonb '{}' @* '$.datetime()';
 ERROR:  Invalid argument for SQL/JSON datetime function
 select jsonb '""' @* '$.datetime()';
 ERROR:  Invalid argument for SQL/JSON datetime function
+-- Standard extension: UNIX epoch to timestamptz
+select jsonb '0' @* '$.datetime()';
+          ?column?           
+-----------------------------
+ "1969-12-31T16:00:00-08:00"
+(1 row)
+
+select jsonb '0' @* '$.datetime().type()';
+          ?column?          
+----------------------------
+ "timestamp with time zone"
+(1 row)
+
+select jsonb '1490216035.5' @* '$.datetime()';
+           ?column?            
+-------------------------------
+ "2017-03-22T13:53:55.5-07:00"
+(1 row)
+
 select jsonb '"10-03-2017"' @*       '$.datetime("dd-mm-yyyy")';
    ?column?   
 --------------
