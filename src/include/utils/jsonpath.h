@@ -31,6 +31,9 @@ typedef struct
 #define JSONPATH_LAX		(0x80000000)
 #define JSONPATH_HDRSZ		(offsetof(JsonPath, data))
 
+/* flags for JsonPathItem */
+#define JSPI_OUT_PATH		0x01
+
 #define DatumGetJsonPathP(d)			((JsonPath *) DatumGetPointer(PG_DETOAST_DATUM(d)))
 #define DatumGetJsonPathPCopy(d)		((JsonPath *) DatumGetPointer(PG_DETOAST_DATUM_COPY(d)))
 #define PG_GETARG_JSONPATH_P(x)			DatumGetJsonPathP(PG_GETARG_DATUM(x))
@@ -194,6 +197,7 @@ typedef struct JsonPathItem {
 } JsonPathItem;
 
 #define jspHasNext(jsp) ((jsp)->nextPos > 0)
+#define jspOutPath(jsp) (((jsp)->flags & JSPI_OUT_PATH) != 0)
 
 extern void jspInit(JsonPathItem *v, JsonPath *js);
 extern void jspInitByBuffer(JsonPathItem *v, char *base, int32 pos);
