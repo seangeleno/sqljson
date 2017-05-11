@@ -2183,6 +2183,8 @@ ExecInitExprRec(Expr *node, ExprState *state,
 						lappend(scratch.d.jsonexpr.args, var);
 				}
 
+				scratch.d.jsonexpr.cache = NULL;
+
 				if (jexpr->coercions)
 				{
 					JsonCoercion **coercion;
