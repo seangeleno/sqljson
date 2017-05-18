@@ -92,11 +92,11 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 				chld = flattenJsonPathParseItem(buf, item->value.args.left,
 												allowCurrent,
 												insideArraySubscript);
-				*(int32*)(buf->data + left) = chld;
+				*(int32*)(buf->data + left) = chld - pos;
 				chld = flattenJsonPathParseItem(buf, item->value.args.right,
 												allowCurrent,
 												insideArraySubscript);
-				*(int32*)(buf->data + right) = chld;
+				*(int32*)(buf->data + right) = chld - pos;
 			}
 			break;
 		case jpiLikeRegex:
@@ -119,7 +119,7 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 				chld = flattenJsonPathParseItem(buf, item->value.like_regex.expr,
 												allowCurrent,
 												insideArraySubscript);
-				*(int32 *)(buf->data + offs) = chld;
+				*(int32 *)(buf->data + offs) = chld - pos;
 			}
 			break;
 		case jpiFilter:
@@ -142,7 +142,7 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 												item->type == jpiFilter ||
 												allowCurrent,
 												insideArraySubscript);
-				*(int32*)(buf->data + arg) = chld;
+				*(int32*)(buf->data + arg) = chld - pos;
 			}
 			break;
 		case jpiNull:
@@ -183,12 +183,12 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 					int32		frompos =
 						flattenJsonPathParseItem(buf,
 												item->value.array.elems[i].from,
-												true, true);
+												true, true) - pos;
 
 					if (item->value.array.elems[i].to)
 						topos = flattenJsonPathParseItem(buf,
 												item->value.array.elems[i].to,
-												true, true);
+												true, true) - pos;
 					else
 						topos = 0;
 
@@ -229,11 +229,11 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 
 				foreach(lc, item->value.sequence.elems)
 				{
-					int32		pos =
+					int32		elempos =
 						flattenJsonPathParseItem(buf, lfirst(lc),
 												 allowCurrent, insideArraySubscript);
 
-					*(int32 *) &buf->data[offset] = pos;
+					*(int32 *) &buf->data[offset] = elempos - pos;
 					offset += sizeof(int32);
 				}
 			}
@@ -263,8 +263,8 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 												 insideArraySubscript);
 					int32	   *ppos = (int32 *) &buf->data[offset];
 
-					ppos[0] = keypos;
-					ppos[1] = valpos;
+					ppos[0] = keypos - pos;
+					ppos[1] = valpos - pos;
 
 					offset += 2 * sizeof(int32);
 				}
@@ -277,7 +277,7 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 	if (item->next)
 		*(int32*)(buf->data + next) =
 			flattenJsonPathParseItem(buf, item->next, allowCurrent,
-									 insideArraySubscript);
+									 insideArraySubscript) - pos;
 
 	return  pos;
 }
@@ -715,18 +715,10 @@ jspInit(JsonPathItem *v, JsonPath *js)
 void
 jspInitByBuffer(JsonPathItem *v, char *base, int32 pos)
 {
-	v->base = base;
+	v->base = base + pos;
 
 	read_byte(v->type, base, pos);
-
-	switch(INTALIGN(pos) - pos)
-	{
-		case 3: pos++;
-		case 2: pos++;
-		case 1: pos++;
-		default: break;
-	}
-
+	pos = INTALIGN((uintptr_t)(base + pos)) - (uintptr_t) base;
 	read_int32(v->nextPos, base, pos);
 
 	switch(v->type)
