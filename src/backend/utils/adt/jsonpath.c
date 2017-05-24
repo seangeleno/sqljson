@@ -25,11 +25,12 @@
  */
 static int
 flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
-						 bool allowCurrent, bool insideArraySubscript)
+						 int nestingLevel, bool insideArraySubscript)
 {
 	/* position from begining of jsonpath data */
 	int32	pos = buf->len - JSONPATH_HDRSZ;
 	int32	chld, next;
+	int			argNestingLevel = 0;
 
 	check_stack_depth();
 
@@ -90,11 +91,11 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 				appendBinaryStringInfo(buf, (char*)&right /* fake value */, sizeof(right));
 
 				chld = flattenJsonPathParseItem(buf, item->value.args.left,
-												allowCurrent,
+												nestingLevel + argNestingLevel,
 												insideArraySubscript);
 				*(int32*)(buf->data + left) = chld - pos;
 				chld = flattenJsonPathParseItem(buf, item->value.args.right,
-												allowCurrent,
+												nestingLevel + argNestingLevel,
 												insideArraySubscript);
 				*(int32*)(buf->data + right) = chld - pos;
 			}
@@ -117,12 +118,14 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 				appendStringInfoChar(buf, '\0');
 
 				chld = flattenJsonPathParseItem(buf, item->value.like_regex.expr,
-												allowCurrent,
+												nestingLevel,
 												insideArraySubscript);
 				*(int32 *)(buf->data + offs) = chld - pos;
 			}
 			break;
 		case jpiFilter:
+			argNestingLevel++;
+			/* fall through */
 		case jpiIsUnknown:
 		case jpiNot:
 		case jpiPlus:
@@ -139,8 +142,7 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 					break;
 
 				chld = flattenJsonPathParseItem(buf, item->value.arg,
-												item->type == jpiFilter ||
-												allowCurrent,
+												nestingLevel + argNestingLevel,
 												insideArraySubscript);
 				*(int32*)(buf->data + arg) = chld - pos;
 			}
@@ -152,8 +154,18 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 		case jpiAnyArray:
 		case jpiAnyKey:
 			break;
+		case jpiCurrentN:
+			if (item->value.current.level < 0 ||
+				item->value.current.level >= nestingLevel)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("invalid outer item reference in jsonpath @")));
+
+			appendBinaryStringInfo(buf, (char *) &item->value.current.level,
+								   sizeof(item->value.current.level));
+			break;
 		case jpiCurrent:
-			if (!allowCurrent)
+			if (nestingLevel <= 0)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("@ is not allowed in root expressions")));
@@ -183,12 +195,12 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 					int32		frompos =
 						flattenJsonPathParseItem(buf,
 												item->value.array.elems[i].from,
-												true, true) - pos;
+												nestingLevel + 1, true) - pos;
 
 					if (item->value.array.elems[i].to)
 						topos = flattenJsonPathParseItem(buf,
 												item->value.array.elems[i].to,
-												true, true) - pos;
+												nestingLevel + 1, true) - pos;
 					else
 						topos = 0;
 
@@ -231,7 +243,8 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 				{
 					int32		elempos =
 						flattenJsonPathParseItem(buf, lfirst(lc),
-												 allowCurrent, insideArraySubscript);
+												 nestingLevel,
+												 insideArraySubscript);
 
 					*(int32 *) &buf->data[offset] = elempos - pos;
 					offset += sizeof(int32);
@@ -255,11 +268,11 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 					JsonPathParseItem *field = lfirst(lc);
 					int32		keypos =
 						flattenJsonPathParseItem(buf, field->value.args.left,
-												 allowCurrent,
+												 nestingLevel,
 												 insideArraySubscript);
 					int32		valpos =
 						flattenJsonPathParseItem(buf, field->value.args.right,
-												 allowCurrent,
+												 nestingLevel,
 												 insideArraySubscript);
 					int32	   *ppos = (int32 *) &buf->data[offset];
 
@@ -276,7 +289,7 @@ flattenJsonPathParseItem(StringInfo buf, JsonPathParseItem *item,
 
 	if (item->next)
 		*(int32*)(buf->data + next) =
-			flattenJsonPathParseItem(buf, item->next, allowCurrent,
+			flattenJsonPathParseItem(buf, item->next, nestingLevel,
 									 insideArraySubscript) - pos;
 
 	return  pos;
@@ -301,7 +314,7 @@ jsonpath_in(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 				 errmsg("invalid input syntax for jsonpath: \"%s\"", in)));
 
-	flattenJsonPathParseItem(&buf, jsonpath->expr, false, false);
+	flattenJsonPathParseItem(&buf, jsonpath->expr, 0, false);
 
 	res = (JsonPath*)buf.data;
 	SET_VARSIZE(res, buf.len);
@@ -520,6 +533,10 @@ printJsonPathItem(StringInfo buf, JsonPathItem *v, bool inKey, bool printBracket
 			Assert(!inKey);
 			appendStringInfoChar(buf, '@');
 			break;
+		case jpiCurrentN:
+			Assert(!inKey);
+			appendStringInfo(buf, "@%d", v->content.current.level);
+			break;
 		case jpiRoot:
 			Assert(!inKey);
 			appendStringInfoChar(buf, '$');
@@ -737,6 +754,9 @@ jspInitByBuffer(JsonPathItem *v, char *base, int32 pos)
 		case jpiKeyValue:
 		case jpiLast:
 			break;
+		case jpiCurrentN:
+			read_int32(v->content.current.level, base, pos);
+			break;
 		case jpiKey:
 		case jpiString:
 		case jpiVariable:
@@ -837,6 +857,7 @@ jspGetNext(JsonPathItem *v, JsonPathItem *a)
 			v->type == jpiIndexArray ||
 			v->type == jpiFilter ||
 			v->type == jpiCurrent ||
+			v->type == jpiCurrentN ||
 			v->type == jpiExists ||
 			v->type == jpiRoot ||
 			v->type == jpiVariable ||

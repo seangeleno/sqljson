@@ -43,6 +43,21 @@ makeItemType(int type)
 	return v;
 }
 
+
+static JsonPathParseItem*
+makeItemCurrentN(int level)
+{
+	JsonPathParseItem *v;
+
+	if (!level)
+		return makeItemType(jpiCurrent);
+
+	v = makeItemType(jpiCurrentN);
+	v->value.current.level = level;
+
+	return v;
+}
+
 static JsonPathParseItem*
 makeItemString(string *s)
 {
@@ -286,7 +301,7 @@ makeItemObject(List *fields)
 %token	<str>		LESS_P LESSEQUAL_P EQUAL_P NOTEQUAL_P GREATEREQUAL_P GREATER_P
 %token	<str>		ANY_P STRICT_P LAX_P LAST_P STARTS_P WITH_P LIKE_REGEX_P FLAG_P
 %token	<str>		ABS_P SIZE_P TYPE_P FLOOR_P DOUBLE_P CEILING_P DATETIME_P
-%token	<str>		KEYVALUE_P
+%token	<str>		KEYVALUE_P CURRENT_P
 
 %type	<result>	result
 
@@ -398,6 +413,7 @@ path_primary:
 	scalar_value					{ $$ = $1; }
 	| '$'							{ $$ = makeItemType(jpiRoot); }
 	| '@'							{ $$ = makeItemType(jpiCurrent); }
+	| CURRENT_P						{ $$ = makeItemCurrentN(pg_atoi(&$1.val[1], 4, 0)); }
 	| LAST_P						{ $$ = makeItemType(jpiLast); }
 	| '(' expr_seq ')'				{ $$ = $2; }
 	| '[' ']'						{ $$ = makeItemUnary(jpiArray, NULL); }
