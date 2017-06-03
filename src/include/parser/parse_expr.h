@@ -23,4 +23,8 @@ extern Node *transformExpr(ParseState *pstate, Node *expr, ParseExprKind exprKin
 
 extern const char *ParseExprKindName(ParseExprKind exprKind);
 
+extern void initJsonItemCoercions(ParseState *pstate,
+					  JsonItemCoercions *coercions, JsonReturning *returning,
+					  Oid contextItemTypeId);
+
 #endif							/* PARSE_EXPR_H */

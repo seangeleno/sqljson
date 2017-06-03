@@ -99,6 +99,8 @@ typedef enum JsonPathItemType {
 		jpiArgument,
 		jpiMethod,
 		jpiFunction,
+		jpiOperator,
+		jpiCast,
 
 		jpiBinary = 0xFF /* for jsonpath operators implementation only */
 } JsonPathItemType;
@@ -214,6 +216,24 @@ typedef struct JsonPathItem {
 			int32	   *args;
 			int32		nargs;
 		} func;
+
+		struct {
+			int32		id;
+			int32		left;
+			int32		right;
+			char	   *name;
+			int32		namelen;
+		} op;
+
+		struct {
+			int32		id;
+			int32		arg;
+			int32		type_name_count;
+			int32	   *type_name_len;
+			char	   *type_name;
+			List	   *type_mods;
+			bool		type_is_array;
+		} cast;
 	} content;
 } JsonPathItem;
 
@@ -240,6 +260,7 @@ extern JsonPathItem *jspGetLambdaExpr(JsonPathItem *lambda, JsonPathItem *expr);
 extern JsonPathItem *jspGetFunctionArg(JsonPathItem *func, int index,
 				  JsonPathItem *arg);
 extern JsonPathItem *jspGetMethodItem(JsonPathItem *method, JsonPathItem *arg);
+extern JsonPathItem *jspGetCastArg(JsonPathItem *cast, JsonPathItem *arg);
 
 /*
  * Parsing
@@ -250,6 +271,7 @@ typedef struct JsonPathParseItem JsonPathParseItem;
 struct JsonPathParseItem {
 	JsonPathItemType	type;
 	uint8				flags;
+	enum { JPI_JSON, JPI_BOOL, JPI_UNKNOWN } datatype;
 	JsonPathParseItem	*next; /* next in path */
 
 	union {
@@ -310,6 +332,20 @@ struct JsonPathParseItem {
 			char   *name;
 			int32	namelen;
 		} func;
+
+		struct {
+			JsonPathParseItem *left;
+			JsonPathParseItem *right;
+			char	   *name;
+			int32		namelen;
+		} op;
+
+		struct {
+			JsonPathParseItem *arg;
+			List	   *type_name;
+			List	   *type_mods;
+			bool		type_is_array;
+		} cast;
 
 		/* scalars */
 		Numeric		numeric;

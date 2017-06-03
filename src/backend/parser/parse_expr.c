@@ -4654,7 +4654,7 @@ initJsonItemCoercion(ParseState *pstate, Oid typid, JsonReturning *returning)
 	return coerceJsonExpr(pstate, expr, returning);
 }
 
-static void
+void
 initJsonItemCoercions(ParseState *pstate, JsonItemCoercions *coercions,
 					  JsonReturning *returning, Oid contextItemTypeId)
 {
