@@ -4044,7 +4044,7 @@ ExecEvalAggOrderedTransTuple(ExprState *state, ExprEvalStep *op,
 /*
  * Evaluate a expression substituting specified value in its CaseTestExpr nodes.
  */
-static Datum
+Datum
 ExecEvalExprPassingCaseValue(ExprState *estate, ExprContext *econtext,
 							 bool *isnull,
 							 Datum caseval_datum, bool caseval_isnull)
@@ -4104,6 +4104,7 @@ ExecEvalJsonBehavior(ExprContext *econtext, JsonBehavior *behavior,
 
 		case JSON_BEHAVIOR_NULL:
 		case JSON_BEHAVIOR_UNKNOWN:
+		case JSON_BEHAVIOR_EMPTY:
 			*is_null = true;
 			return (Datum) 0;
 
@@ -4165,8 +4166,14 @@ EvalJsonPathVar(void *cxt, bool *isnull)
 
 	if (!ecxt->evaluated)
 	{
+		MemoryContext oldcxt = ecxt->mcxt ?
+			MemoryContextSwitchTo(ecxt->mcxt) : NULL;
+
 		ecxt->value = ExecEvalExpr(ecxt->estate, ecxt->econtext, &ecxt->isnull);
 		ecxt->evaluated = true;
+
+		if (oldcxt)
+			MemoryContextSwitchTo(oldcxt);
 	}
 
 	*isnull = ecxt->isnull;
@@ -4354,6 +4361,11 @@ ExecEvalJsonExpr(ExprState *state, ExprEvalStep *op, ExprContext *econtext,
 			*resnull = false;
 			break;
 
+		case IS_JSON_TABLE:
+			res = item;
+			*resnull = false;
+			break;
+
 		default:
 			elog(ERROR, "unrecognized SQL/JSON expression op %d",
 				 jexpr->op);
@@ -4374,6 +4386,7 @@ ExecEvalJsonExpr(ExprState *state, ExprEvalStep *op, ExprContext *econtext,
 	}
 
 	if (jexpr->op != IS_JSON_EXISTS &&
+		jexpr->op != IS_JSON_TABLE &&
 		(!empty ? jexpr->op != IS_JSON_VALUE :
 		 /* result is already coerced in DEFAULT behavior case */
 		 jexpr->on_empty.btype != JSON_BEHAVIOR_DEFAULT))
