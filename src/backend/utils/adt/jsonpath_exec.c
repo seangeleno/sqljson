@@ -23,6 +23,12 @@
 #include "utils/jsonpath.h"
 #include "utils/varlena.h"
 
+#ifdef JSONPATH_JSON_C
+#define JSONXOID JSONOID
+#else
+#define JSONXOID JSONBOID
+#endif
+
 typedef struct JsonPathExecContext
 {
 	List	   *vars;
@@ -155,6 +161,7 @@ JsonValueListNext(const JsonValueList *jvl, JsonValueListIterator *it)
 	return lfirst(it->lcell);
 }
 
+#ifndef JSONPATH_JSON_C
 /*
  * Initialize a binary JsonbValue with the given jsonb container.
  */
@@ -167,6 +174,7 @@ JsonbInitBinary(JsonbValue *jbv, Jsonb *jb)
 
 	return jbv;
 }
+#endif
 
 /*
  * Transform a JsonbValue into a binary JsonbValue by encoding it to a
@@ -278,7 +286,7 @@ computeJsonPathVariable(JsonPathItem *variable, List *vars, JsonbValue *value)
 			value->val.datetime.typmod = var->typmod;
 			value->val.datetime.value = computedValue;
 			break;
-		case JSONBOID:
+		case JSONXOID:
 			{
 				Jsonb	   *jb = DatumGetJsonbP(computedValue);
 
@@ -344,7 +352,7 @@ JsonbType(JsonbValue *jb)
 
 	if (jb->type == jbvBinary)
 	{
-		JsonbContainer	*jbc = jb->val.binary.data;
+		JsonbContainer	*jbc = (void *) jb->val.binary.data;
 
 		if (JsonContainerIsScalar(jbc))
 			type = jbvScalar;
@@ -369,7 +377,7 @@ JsonbTypeName(JsonbValue *jb)
 
 	if (jb->type == jbvBinary)
 	{
-		JsonbContainer *jbc = jb->val.binary.data;
+		JsonbContainer *jbc = (void *) jb->val.binary.data;
 
 		if (JsonContainerIsScalar(jbc))
 			jb = JsonbExtractScalar(jbc, &jbvbuf);
@@ -430,7 +438,7 @@ JsonbArraySize(JsonbValue *jb)
 
 	if (jb->type == jbvBinary)
 	{
-		JsonbContainer *jbc = jb->val.binary.data;
+		JsonbContainer *jbc =  (void *) jb->val.binary.data;
 
 		if (JsonContainerIsArray(jbc) && !JsonContainerIsScalar(jbc))
 			return JsonContainerSize(jbc);
@@ -2372,7 +2380,7 @@ makePassingVars(Jsonb *jb)
 					jpv->cb_arg = v.val.numeric;
 					break;
 				case jbvBinary:
-					jpv->typid = JSONBOID;
+					jpv->typid = JSONXOID;
 					jpv->cb_arg = DatumGetPointer(JsonbPGetDatum(JsonbValueToJsonb(&v)));
 					break;
 				default:
