@@ -32,6 +32,7 @@
 
 #include "access/nbtree.h"
 #include "catalog/objectaccess.h"
+#include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "executor/execExpr.h"
 #include "executor/nodeSubplan.h"
@@ -78,6 +79,7 @@ static void ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
 					  ExprEvalStep *scratch,
 					  FunctionCallInfo fcinfo, AggStatePerTrans pertrans,
 					  int transno, int setno, int setoff, bool ishash);
+static char getJsonExprVolatility(JsonExpr *jsexpr);
 
 
 /*
@@ -2209,6 +2211,9 @@ ExecInitExprRec(Expr *node, ExprState *state,
 					}
 				}
 
+				if (jexpr->on_error.btype != JSON_BEHAVIOR_ERROR)
+					scratch.d.jsonexpr.volatility = getJsonExprVolatility(jexpr);
+
 				ExprEvalPushStep(state, &scratch);
 			}
 			break;
@@ -3293,4 +3298,105 @@ ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
 		Assert(as->d.agg_strict_trans_check.jumpnull == -1);
 		as->d.agg_strict_trans_check.jumpnull = state->steps_len;
 	}
+}
+
+static char
+getExprVolatility(Node *expr)
+{
+	if (contain_volatile_functions(expr))
+		return PROVOLATILE_VOLATILE;
+
+	if (contain_mutable_functions(expr))
+		return PROVOLATILE_STABLE;
+
+	return PROVOLATILE_IMMUTABLE;
+}
+
+static char
+getJsonCoercionVolatility(JsonCoercion *coercion, JsonReturning *returning)
+{
+	if (!coercion)
+		return PROVOLATILE_IMMUTABLE;
+
+	if (coercion->expr)
+		return getExprVolatility(coercion->expr);
+
+	if (coercion->via_io)
+	{
+		Oid			typinput;
+		Oid			typioparam;
+
+		getTypeInputInfo(returning->typid, &typinput, &typioparam);
+
+		return func_volatile(typinput);
+	}
+
+	if (coercion->via_populate)
+		return PROVOLATILE_STABLE;
+
+	return PROVOLATILE_IMMUTABLE;
+}
+
+static char
+getJsonExprVolatility(JsonExpr *jsexpr)
+{
+	char		volatility;
+	char		volatility2;
+	ListCell   *lc;
+
+	volatility = getExprVolatility(jsexpr->formatted_expr);
+
+	if (volatility == PROVOLATILE_VOLATILE)
+		return PROVOLATILE_VOLATILE;
+
+	volatility2 = getJsonCoercionVolatility(jsexpr->result_coercion,
+											&jsexpr->returning);
+
+	if (volatility2 == PROVOLATILE_VOLATILE)
+		return PROVOLATILE_VOLATILE;
+
+	if (volatility2 == PROVOLATILE_STABLE)
+		volatility = PROVOLATILE_STABLE;
+
+	if (jsexpr->coercions)
+	{
+		JsonCoercion **coercion;
+
+		for (coercion = &jsexpr->coercions->null;
+			 coercion <= &jsexpr->coercions->composite;
+			 coercion++)
+		{
+			volatility2 = getJsonCoercionVolatility(*coercion, &jsexpr->returning);
+
+			if (volatility2 == PROVOLATILE_VOLATILE)
+				return PROVOLATILE_VOLATILE;
+
+			if (volatility2 == PROVOLATILE_STABLE)
+				volatility = PROVOLATILE_STABLE;
+		}
+	}
+
+	if (jsexpr->on_empty.btype == JSON_BEHAVIOR_DEFAULT)
+	{
+		volatility2 = getExprVolatility(jsexpr->on_empty.default_expr);
+
+		if (volatility2 == PROVOLATILE_VOLATILE)
+			return PROVOLATILE_VOLATILE;
+
+		if (volatility2 == PROVOLATILE_STABLE)
+			volatility = PROVOLATILE_STABLE;
+	}
+
+	foreach(lc, jsexpr->passing.values)
+	{
+		volatility2 = getExprVolatility(lfirst(lc));
+
+		if (volatility2 == PROVOLATILE_VOLATILE)
+			return PROVOLATILE_VOLATILE;
+
+		if (volatility2 == PROVOLATILE_STABLE)
+			volatility = PROVOLATILE_STABLE;
+	}
+
+	return volatility;
 }
