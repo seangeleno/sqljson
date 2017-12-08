@@ -38,6 +38,7 @@ makeItemType(int type)
 	JsonPathParseItem* v = palloc(sizeof(*v));
 
 	v->type = type;
+	v->flags = 0;
 	v->next = NULL;
 
 	return v;

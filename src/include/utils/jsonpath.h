@@ -126,6 +126,7 @@ typedef enum JsonPathItemType {
 
 typedef struct JsonPathItem {
 	JsonPathItemType	type;
+	uint8				flags;
 
 	/* position form base to next node */
 	int32			nextPos;
@@ -217,6 +218,7 @@ typedef struct JsonPathParseItem JsonPathParseItem;
 
 struct JsonPathParseItem {
 	JsonPathItemType	type;
+	uint8				flags;
 	JsonPathParseItem	*next; /* next in path */
 
 	union {
