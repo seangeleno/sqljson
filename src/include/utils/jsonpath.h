@@ -24,6 +24,7 @@ typedef struct
 {
 	int32	vl_len_;/* varlena header (do not touch directly!) */
 	uint32	header;	/* just version, other bits are reservedfor future use */
+	uint32	ext_items_count; /* number of items that need cache for external execution */
 	char	data[FLEXIBLE_ARRAY_MEMBER];
 } JsonPath;
 
@@ -340,7 +341,9 @@ typedef struct JsonValueList
 JsonPathExecResult	executeJsonPath(JsonPath *path,
 									List	*vars, /* list of JsonPathVariable */
 									Jsonb *json,
-									JsonValueList *foundJson);
+									JsonValueList *foundJson,
+									void **pCache,
+									MemoryContext cacheCxt);
 
 extern bool  JsonbPathExists(Datum jb, JsonPath *path, List *vars);
 extern Datum JsonbPathQuery(Datum jb, JsonPath *jp, JsonWrapper wrapper,

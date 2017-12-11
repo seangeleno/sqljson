@@ -47,6 +47,8 @@ typedef struct JsonPathExecContext
 	bool		lax;
 	JsonbValue *root;				/* for $ evaluation */
 	JsonItemStack stack;			/* for @N evaluation */
+	void	  **cache;
+	MemoryContext cache_mcxt;
 	int			innermostArraySize;	/* for LAST array index evaluation */
 } JsonPathExecContext;
 
@@ -2788,7 +2790,8 @@ recursiveExecuteBool(JsonPathExecContext *cxt, JsonPathItem *jsp,
  * Public interface to jsonpath executor
  */
 JsonPathExecResult
-executeJsonPath(JsonPath *path, List *vars, Jsonb *json, JsonValueList *foundJson)
+executeJsonPath(JsonPath *path, List *vars, Jsonb *json,
+				JsonValueList *foundJson, void **pCache, MemoryContext cacheCxt)
 {
 	JsonPathExecContext cxt;
 	JsonPathItem	jsp;
@@ -2803,7 +2806,69 @@ executeJsonPath(JsonPath *path, List *vars, Jsonb *json, JsonValueList *foundJso
 	cxt.stack = NULL;
 	cxt.innermostArraySize = -1;
 
+	if (path->ext_items_count)
+	{
+		if (pCache)
+		{
+			struct
+			{
+				JsonPath   *path;
+				void	  **cache;
+			} *cache = *pCache;
+
+			if (!cache)
+				cache = *pCache = MemoryContextAllocZero(cacheCxt, sizeof(*cache));
+
+			if (cache->path &&
+				(VARSIZE(path) != VARSIZE(cache->path) ||
+				 memcmp(path, cache->path, VARSIZE(path))))
+			{
+				/* invalidate cache TODO optimize */
+				cache->path = NULL;
+
+				if (cache->cache)
+				{
+					pfree(cache->cache);
+					cache->cache = NULL;
+				}
+			}
+
+			if (cache->path)
+			{
+				Assert(cache->cache);
+			}
+			else
+			{
+				Assert(!cache->cache);
+
+				cache->path = MemoryContextAlloc(cacheCxt, VARSIZE(path));
+				memcpy(cache->path, path, VARSIZE(path));
+
+				cache->cache = MemoryContextAllocZero(cacheCxt,
+													  sizeof(cxt.cache[0]) *
+													  path->ext_items_count);
+			}
+
+			cxt.cache = cache->cache;
+			cxt.cache_mcxt = cacheCxt;
+
+			path = cache->path;		/* use cached jsonpath value */
+		}
+		else
+		{
+			cxt.cache = palloc0(sizeof(cxt.cache[0]) * path->ext_items_count);
+			cxt.cache_mcxt = CurrentMemoryContext;
+		}
+	}
+	else
+	{
+		cxt.cache = NULL;
+		cxt.cache_mcxt = NULL;
+	}
+
 	pushJsonItem(&cxt.stack, &root, cxt.root);
+
+	jspInit(&jsp, path);
 
 	if (!cxt.lax && !foundJson)
 	{
@@ -2975,7 +3040,8 @@ jsonb_jsonpath_exists(PG_FUNCTION_ARGS)
 	if (PG_NARGS() == 3)
 		vars = makePassingVars(PG_GETARG_JSONB_P(2));
 
-	res = executeJsonPath(jp, vars, jb, NULL);
+	res = executeJsonPath(jp, vars, jb, NULL,
+						  &fcinfo->flinfo->fn_extra, fcinfo->flinfo->fn_mcxt);
 
 	PG_FREE_IF_COPY(jb, 0);
 	PG_FREE_IF_COPY(jp, 1);
@@ -3006,7 +3072,9 @@ jsonb_jsonpath_predicate(FunctionCallInfo fcinfo, List *vars)
 	JsonValueList found = { 0 };
 	JsonPathExecResult res;
 
-	res = executeJsonPath(jp, vars, jb, &found);
+	res = executeJsonPath(jp, vars, jb, &found,
+						  &fcinfo->flinfo->fn_extra,
+						  fcinfo->flinfo->fn_mcxt);
 
 	throwJsonPathError(res);
 
@@ -3043,6 +3111,12 @@ jsonb_jsonpath_predicate3(PG_FUNCTION_ARGS)
 									makePassingVars(PG_GETARG_JSONB_P(2)));
 }
 
+typedef struct JsonpathQueryContext
+{
+	void			*cache;		/* jsonpath executor cache */
+	FuncCallContext	*srfcxt;	/* SRF context */
+} JsonpathQueryContext;
+
 static Datum
 jsonb_jsonpath_query(FunctionCallInfo fcinfo)
 {
@@ -3050,8 +3124,13 @@ jsonb_jsonpath_query(FunctionCallInfo fcinfo)
 	List			*found;
 	JsonbValue		*v;
 	ListCell		*c;
+	JsonpathQueryContext *cxt = fcinfo->flinfo->fn_extra;
 
-	if (SRF_IS_FIRSTCALL())
+	if (!cxt)
+		cxt = fcinfo->flinfo->fn_extra =
+			MemoryContextAllocZero(fcinfo->flinfo->fn_mcxt, sizeof(*cxt));
+
+	if (SRF_IS_FIRSTCALL_EXT(&cxt->srfcxt))
 	{
 		JsonPath			*jp = PG_GETARG_JSONPATH_P(1);
 		Jsonb				*jb;
@@ -3060,14 +3139,15 @@ jsonb_jsonpath_query(FunctionCallInfo fcinfo)
 		List				*vars = NIL;
 		JsonValueList		found = { 0 };
 
-		funcctx = SRF_FIRSTCALL_INIT();
+		funcctx = SRF_FIRSTCALL_INIT_EXT(&cxt->srfcxt);
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		jb = PG_GETARG_JSONB_P_COPY(0);
 		if (PG_NARGS() == 3)
 			vars = makePassingVars(PG_GETARG_JSONB_P(2));
 
-		res = executeJsonPath(jp, vars, jb, &found);
+		res = executeJsonPath(jp, vars, jb, &found, &cxt->cache,
+							  fcinfo->flinfo->fn_mcxt);
 
 		if (jperIsError(res))
 			throwJsonPathError(res);
@@ -3079,13 +3159,13 @@ jsonb_jsonpath_query(FunctionCallInfo fcinfo)
 		MemoryContextSwitchTo(oldcontext);
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
+	funcctx = SRF_PERCALL_SETUP_EXT(&cxt->srfcxt);
 	found = funcctx->user_fctx;
 
 	c = list_head(found);
 
 	if (c == NULL)
-		SRF_RETURN_DONE(funcctx);
+		SRF_RETURN_DONE_EXT(funcctx, &cxt->srfcxt);
 
 	v = lfirst(c);
 	funcctx->user_fctx = list_delete_first(found);
@@ -3137,7 +3217,7 @@ bool
 JsonbPathExists(Datum jb, JsonPath *jp, List *vars)
 {
 	JsonPathExecResult res = executeJsonPath(jp, vars, DatumGetJsonbP(jb),
-											 NULL);
+											 NULL, NULL, NULL);
 
 	throwJsonPathError(res);
 
@@ -3152,7 +3232,7 @@ JsonbPathQuery(Datum jb, JsonPath *jp, JsonWrapper wrapper,
 	bool		wrap;
 	JsonValueList found = { 0 };
 	JsonPathExecResult jper = executeJsonPath(jp, vars, DatumGetJsonbP(jb),
-											  &found);
+											  &found, NULL, NULL);
 	int			count;
 
 	throwJsonPathError(jper);
@@ -3199,7 +3279,7 @@ JsonbPathValue(Datum jb, JsonPath *jp, bool *empty, List *vars)
 	JsonbValue *res;
 	JsonValueList found = { 0 };
 	JsonPathExecResult jper = executeJsonPath(jp, vars, DatumGetJsonbP(jb),
-											  &found);
+											  &found, NULL, NULL);
 	int			count;
 
 	throwJsonPathError(jper);
@@ -3392,7 +3472,7 @@ JsonTableResetContextItem(JsonTableScanState *scan, Datum item)
 	oldcxt = MemoryContextSwitchTo(scan->mcxt);
 
 	res = executeJsonPath(scan->path, scan->args, DatumGetJsonbP(item),
-						  &scan->found);
+						  &scan->found, NULL /* FIXME */, NULL);
 
 	MemoryContextSwitchTo(oldcxt);
 

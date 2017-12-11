@@ -22,6 +22,7 @@ typedef struct JsonPathContext
 {
 	StringInfo	buf;
 	Jsonb	   *vars;
+	int32		id;
 } JsonPathContext;
 
 
@@ -646,6 +647,8 @@ encodeJsonPath(JsonPathParseItem *item, bool lax, int32 sizeEstimation,
 
 	cxt.buf = &buf;
 	cxt.vars = vars;
+	cxt.id = 0;
+
 	flattenJsonPathParseItem(&cxt, item, 0, false);
 
 	res = (JsonPath *) buf.data;
@@ -653,6 +656,7 @@ encodeJsonPath(JsonPathParseItem *item, bool lax, int32 sizeEstimation,
 	res->header = JSONPATH_VERSION;
 	if (lax)
 		res->header |= JSONPATH_LAX;
+	res->ext_items_count = cxt.id;
 
 	return res;
 }
