@@ -338,6 +338,30 @@ typedef struct JsonValueList
 	List	   *list;
 } JsonValueList;
 
+typedef struct JsonItemStackEntry
+{
+	JsonbValue *item;
+	struct JsonItemStackEntry *parent;
+} JsonItemStackEntry;
+
+typedef JsonItemStackEntry *JsonItemStack;
+
+typedef struct JsonPathExecContext
+{
+	List	   *vars;
+	bool		lax;
+	JsonbValue *root;				/* for $ evaluation */
+	JsonItemStack stack;			/* for @N evaluation */
+	void	  **cache;
+	MemoryContext cache_mcxt;
+	int			innermostArraySize;	/* for LAST array index evaluation */
+} JsonPathExecContext;
+
+typedef struct JsonValueListIterator
+{
+	ListCell   *lcell;
+} JsonValueListIterator;
+
 JsonPathExecResult	executeJsonPath(JsonPath *path,
 									List	*vars, /* list of JsonPathVariable */
 									Jsonb *json,
@@ -361,5 +385,149 @@ extern Datum EvalJsonPathVar(void *cxt, bool *isnull);
 
 extern const TableFuncRoutine JsonTableRoutine;
 extern const TableFuncRoutine JsonbTableRoutine;
+
+
+/*
+ * Returns jbv* type of of JsonbValue. Note, it never returns
+ * jbvBinary as is - jbvBinary is used as mark of store naked
+ * scalar value. To improve readability it defines jbvScalar
+ * as alias to jbvBinary
+ */
+#define jbvScalar jbvBinary
+
+static inline int
+JsonbType(JsonbValue *jb)
+{
+	int type = jb->type;
+
+	if (jb->type == jbvBinary)
+	{
+		JsonbContainer	*jbc = (void *) jb->val.binary.data;
+
+		if (JsonContainerIsScalar(jbc))
+			type = jbvScalar;
+		else if (JsonContainerIsObject(jbc))
+			type = jbvObject;
+		else if (JsonContainerIsArray(jbc))
+			type = jbvArray;
+		else
+			elog(ERROR, "Unknown container type: 0x%08x", jbc->header);
+	}
+
+	return type;
+}
+
+extern int JsonbArraySize(JsonbValue *jb);
+
+static inline JsonbValue *
+copyJsonbValue(JsonbValue *src)
+{
+	JsonbValue *dst = palloc(sizeof(*dst));
+
+	*dst = *src;
+
+	return dst;
+}
+
+extern JsonbValue *JsonbWrapItemInArray(JsonbValue *jbv);
+extern JsonbValue *JsonbWrapItemsInArray(const JsonValueList *items);
+
+static inline void
+pushJsonItem(JsonItemStack *stack, JsonItemStackEntry *entry, JsonbValue *item)
+{
+	entry->item = item;
+	entry->parent = *stack;
+	*stack = entry;
+}
+
+static inline void
+popJsonItem(JsonItemStack *stack)
+{
+	*stack = (*stack)->parent;
+}
+
+static inline void
+JsonValueListAppend(JsonValueList *jvl, JsonbValue *jbv)
+{
+	if (jvl->singleton)
+	{
+		jvl->list = list_make2(jvl->singleton, jbv);
+		jvl->singleton = NULL;
+	}
+	else if (!jvl->list)
+		jvl->singleton = jbv;
+	else
+		jvl->list = lappend(jvl->list, jbv);
+}
+
+static inline int
+JsonValueListLength(const JsonValueList *jvl)
+{
+	return jvl->singleton ? 1 : list_length(jvl->list);
+}
+
+static inline bool
+JsonValueListIsEmpty(JsonValueList *jvl)
+{
+	return !jvl->singleton && list_length(jvl->list) <= 0;
+}
+
+static inline JsonbValue *
+JsonValueListHead(JsonValueList *jvl)
+{
+	return jvl->singleton ? jvl->singleton : linitial(jvl->list);
+}
+
+static inline List *
+JsonValueListGetList(JsonValueList *jvl)
+{
+	if (jvl->singleton)
+		return list_make1(jvl->singleton);
+
+	return jvl->list;
+}
+
+#define JsonValueListIteratorEnd ((ListCell *) -1)
+
+/*
+ * Get the next item from the sequence advancing iterator.
+ */
+static inline JsonbValue *
+JsonValueListNext(const JsonValueList *jvl, JsonValueListIterator *it)
+{
+	if (it->lcell == JsonValueListIteratorEnd)
+		return NULL;
+
+	if (it->lcell)
+		it->lcell = lnext(it->lcell);
+	else
+	{
+		if (jvl->singleton)
+		{
+			it->lcell = JsonValueListIteratorEnd;
+			return jvl->singleton;
+		}
+
+		it->lcell = list_head(jvl->list);
+	}
+
+	if (!it->lcell)
+	{
+		it->lcell = JsonValueListIteratorEnd;
+		return NULL;
+	}
+
+	return lfirst(it->lcell);
+}
+
+extern void JsonValueListConcat(JsonValueList *jvl1, JsonValueList jvl2);
+
+extern JsonPathExecResult jspRecursiveExecute(JsonPathExecContext *cxt,
+					JsonPathItem *jsp, JsonbValue *jb, JsonValueList *found);
+extern JsonPathExecResult jspRecursiveExecuteNested(JsonPathExecContext *cxt,
+						  JsonPathItem *jsp, JsonbValue *jb,
+						  JsonValueList *found);
+extern JsonPathExecResult jspCompareItems(int32 op, JsonbValue *jb1,
+				JsonbValue *jb2);
 
 #endif

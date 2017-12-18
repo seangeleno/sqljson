@@ -33,32 +33,6 @@
 #define JSONXOID JSONBOID
 #endif
 
-typedef struct JsonItemStackEntry
-{
-	JsonbValue *item;
-	struct JsonItemStackEntry *parent;
-} JsonItemStackEntry;
-
-typedef JsonItemStackEntry *JsonItemStack;
-
-typedef struct JsonPathExecContext
-{
-	List	   *vars;
-	bool		lax;
-	JsonbValue *root;				/* for $ evaluation */
-	JsonItemStack stack;			/* for @N evaluation */
-	void	  **cache;
-	MemoryContext cache_mcxt;
-	int			innermostArraySize;	/* for LAST array index evaluation */
-} JsonPathExecContext;
-
-typedef struct JsonValueListIterator
-{
-	ListCell   *lcell;
-} JsonValueListIterator;
-
-#define JsonValueListIteratorEnd ((ListCell *) -1)
-
 typedef struct JsonTableScanState JsonTableScanState;
 typedef struct JsonTableJoinState JsonTableJoinState;
 
@@ -134,22 +108,7 @@ static JsonTableJoinState *JsonTableInitPlanState(JsonTableContext *cxt,
 
 static bool JsonTableNextRow(JsonTableScanState *scan);
 
-
-static inline void
-JsonValueListAppend(JsonValueList *jvl, JsonbValue *jbv)
-{
-	if (jvl->singleton)
-	{
-		jvl->list = list_make2(jvl->singleton, jbv);
-		jvl->singleton = NULL;
-	}
-	else if (!jvl->list)
-		jvl->singleton = jbv;
-	else
-		jvl->list = lappend(jvl->list, jbv);
-}
-
-static inline void
+void
 JsonValueListConcat(JsonValueList *jvl1, JsonValueList jvl2)
 {
 	if (jvl1->singleton)
@@ -174,69 +133,11 @@ JsonValueListConcat(JsonValueList *jvl1, JsonValueList jvl2)
 		jvl1->list = jvl2.list;
 }
 
-static inline int
-JsonValueListLength(const JsonValueList *jvl)
-{
-	return jvl->singleton ? 1 : list_length(jvl->list);
-}
-
-static inline bool
-JsonValueListIsEmpty(JsonValueList *jvl)
-{
-	return !jvl->singleton && list_length(jvl->list) <= 0;
-}
-
-static inline JsonbValue *
-JsonValueListHead(JsonValueList *jvl)
-{
-	return jvl->singleton ? jvl->singleton : linitial(jvl->list);
-}
-
 static inline void
 JsonValueListClear(JsonValueList *jvl)
 {
 	jvl->singleton = NULL;
 	jvl->list = NIL;
-}
-
-static inline List *
-JsonValueListGetList(JsonValueList *jvl)
-{
-	if (jvl->singleton)
-		return list_make1(jvl->singleton);
-
-	return jvl->list;
-}
-
-/*
- * Get the next item from the sequence advancing iterator.
- */
-static inline JsonbValue *
-JsonValueListNext(const JsonValueList *jvl, JsonValueListIterator *it)
-{
-	if (it->lcell == JsonValueListIteratorEnd)
-		return NULL;
-
-	if (it->lcell)
-		it->lcell = lnext(it->lcell);
-	else
-	{
-		if (jvl->singleton)
-		{
-			it->lcell = JsonValueListIteratorEnd;
-			return jvl->singleton;
-		}
-
-		it->lcell = list_head(jvl->list);
-	}
-
-	if (!it->lcell)
-	{
-		it->lcell = JsonValueListIteratorEnd;
-		return NULL;
-	}
-
-	return lfirst(it->lcell);
 }
 
 #ifndef JSONPATH_JSON_C
@@ -269,19 +170,6 @@ JsonbWrapInBinary(JsonbValue *jbv, JsonbValue *out)
 	return JsonbInitBinary(out, jb);
 }
 
-static inline void
-pushJsonItem(JsonItemStack *stack, JsonItemStackEntry *entry, JsonbValue *item)
-{
-	entry->item = item;
-	entry->parent = *stack;
-	*stack = entry;
-}
-
-static inline void
-popJsonItem(JsonItemStack *stack)
-{
-	*stack = (*stack)->parent;
-}
 
 /********************Execute functions for JsonPath***************************/
 
@@ -429,6 +317,7 @@ computeJsonPathItem(JsonPathExecContext *cxt, JsonPathItem *item, JsonbValue *va
 	}
 }
 
+<<<<<<< HEAD
 
 /*
  * Returns jbv* type of of JsonbValue. Note, it never returns
@@ -462,6 +351,8 @@ JsonbType(JsonbValue *jb)
 /*
  * Get the type name of a SQL/JSON item.
  */
+=======
+>>>>>>> 6491ccf... Export jsonpath execution functions and structures
 static const char *
 JsonbTypeName(JsonbValue *jb)
 {
@@ -519,10 +410,14 @@ JsonbTypeName(JsonbValue *jb)
 	}
 }
 
+<<<<<<< HEAD
 /*
  * Returns the size of an array item, or -1 if item is not an array.
  */
 static int
+=======
+int
+>>>>>>> 6491ccf... Export jsonpath execution functions and structures
 JsonbArraySize(JsonbValue *jb)
 {
 	if (jb->type == jbvArray)
@@ -730,11 +625,16 @@ checkEquality(JsonbValue *jb1, JsonbValue *jb2, bool not)
 	return (not ^ eq) ? jperOk : jperNotFound;
 }
 
+<<<<<<< HEAD
 /*
  * Compare two SLQ/JSON items using comparison operation 'op'.
  */
 static JsonPathExecResult
 makeCompare(int32 op, JsonbValue *jb1, JsonbValue *jb2)
+=======
+JsonPathExecResult
+jspCompareItems(int32 op, JsonbValue *jb1, JsonbValue *jb2)
+>>>>>>> 6491ccf... Export jsonpath execution functions and structures
 {
 	int			cmp;
 	bool		res;
@@ -811,6 +711,7 @@ makeCompare(int32 op, JsonbValue *jb1, JsonbValue *jb2)
 	return res ? jperOk : jperNotFound;
 }
 
+<<<<<<< HEAD
 static JsonbValue *
 copyJsonbValue(JsonbValue *src)
 {
@@ -824,6 +725,8 @@ copyJsonbValue(JsonbValue *src)
 /*
  * Execute next jsonpath item if it does exist.
  */
+=======
+>>>>>>> 6491ccf... Export jsonpath execution functions and structures
 static inline JsonPathExecResult
 recursiveExecuteNext(JsonPathExecContext *cxt,
 					 JsonPathItem *cur, JsonPathItem *next,
@@ -949,7 +852,7 @@ executeExpr(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb)
 				case jpiGreater:
 				case jpiLessOrEqual:
 				case jpiGreaterOrEqual:
-					res = makeCompare(jsp->type, lval, rval);
+					res = jspCompareItems(jsp->type, lval, rval);
 					break;
 				default:
 					elog(ERROR, "Unknown operation");
@@ -1503,6 +1406,13 @@ recursiveExecuteNested(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	popJsonItem(&cxt->stack);
 
 	return res;
+}
+
+JsonPathExecResult
+jspRecursiveExecuteNested(JsonPathExecContext *cxt, JsonPathItem *jsp,
+						  JsonbValue *jb, JsonValueList *found)
+{
+	return recursiveExecuteNested(cxt, jsp, jb, found);
 }
 
 /*
@@ -2711,9 +2621,18 @@ wrapItem(JsonbValue *jbv)
 	return JsonbWrapInBinary(jbv, NULL);
 }
 
+<<<<<<< HEAD
 /*
  * Execute jsonpath with automatic unwrapping of current item in lax mode.
  */
+=======
+JsonbValue *
+JsonbWrapItemInArray(JsonbValue *item)
+{
+	return wrapItem(item);
+}
+
+>>>>>>> 6491ccf... Export jsonpath execution functions and structures
 static inline JsonPathExecResult
 recursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 				 JsonValueList *found)
@@ -2747,6 +2666,7 @@ recursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 	return recursiveExecuteNoUnwrap(cxt, jsp, jb, found, false);
 }
 
+<<<<<<< HEAD
 /*
  * Execute boolean-valued jsonpath expression.  Boolean items are not appended
  * to the result list, only return code determines result:
@@ -2754,6 +2674,15 @@ recursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
  *  - jperNotFound => false
  *  - jperError => NULL (errors are converted to NULL values)
  */
+=======
+JsonPathExecResult
+jspRecursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
+					JsonValueList *found)
+{
+	return recursiveExecute(cxt, jsp, jb, found);
+}
+
+>>>>>>> 6491ccf... Export jsonpath execution functions and structures
 static inline JsonPathExecResult
 recursiveExecuteBool(JsonPathExecContext *cxt, JsonPathItem *jsp,
 					 JsonbValue *jb)
@@ -3210,6 +3139,12 @@ wrapItemsInArray(const JsonValueList *items)
 	}
 
 	return pushJsonbValue(&ps, WJB_END_ARRAY, NULL);
+}
+
+JsonbValue *
+JsonbWrapItemsInArray(const JsonValueList *items)
+{
+	return wrapItemsInArray(items);
 }
 
 /********************Interface to pgsql's executor***************************/
