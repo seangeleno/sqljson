@@ -18,6 +18,7 @@
 #include "executor/execExpr.h"
 #include "lib/stringinfo.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_func.h"
 #include "regex/regex.h"
 #include "utils/builtins.h"
 #include "utils/formatting.h"
@@ -343,42 +344,9 @@ computeJsonPathItem(JsonPathExecContext *cxt, JsonPathItem *item, JsonbValue *va
 	}
 }
 
-<<<<<<< HEAD
-
-/*
- * Returns jbv* type of of JsonbValue. Note, it never returns
- * jbvBinary as is - jbvBinary is used as mark of store naked
- * scalar value. To improve readability it defines jbvScalar
- * as alias to jbvBinary
- */
-#define jbvScalar jbvBinary
-static inline int
-JsonbType(JsonbValue *jb)
-{
-	int type = jb->type;
-
-	if (jb->type == jbvBinary)
-	{
-		JsonbContainer	*jbc = (void *) jb->val.binary.data;
-
-		if (JsonContainerIsScalar(jbc))
-			type = jbvScalar;
-		else if (JsonContainerIsObject(jbc))
-			type = jbvObject;
-		else if (JsonContainerIsArray(jbc))
-			type = jbvArray;
-		else
-			elog(ERROR, "Unknown container type: 0x%08x", jbc->header);
-	}
-
-	return type;
-}
-
 /*
  * Get the type name of a SQL/JSON item.
  */
-=======
->>>>>>> 6491ccf... Export jsonpath execution functions and structures
 static const char *
 JsonbTypeName(JsonbValue *jb)
 {
@@ -436,14 +404,10 @@ JsonbTypeName(JsonbValue *jb)
 	}
 }
 
-<<<<<<< HEAD
 /*
  * Returns the size of an array item, or -1 if item is not an array.
  */
-static int
-=======
 int
->>>>>>> 6491ccf... Export jsonpath execution functions and structures
 JsonbArraySize(JsonbValue *jb)
 {
 	if (jb->type == jbvArray)
@@ -651,16 +615,11 @@ checkEquality(JsonbValue *jb1, JsonbValue *jb2, bool not)
 	return (not ^ eq) ? jperOk : jperNotFound;
 }
 
-<<<<<<< HEAD
 /*
  * Compare two SLQ/JSON items using comparison operation 'op'.
  */
-static JsonPathExecResult
-makeCompare(int32 op, JsonbValue *jb1, JsonbValue *jb2)
-=======
 JsonPathExecResult
 jspCompareItems(int32 op, JsonbValue *jb1, JsonbValue *jb2)
->>>>>>> 6491ccf... Export jsonpath execution functions and structures
 {
 	int			cmp;
 	bool		res;
@@ -737,22 +696,9 @@ jspCompareItems(int32 op, JsonbValue *jb1, JsonbValue *jb2)
 	return res ? jperOk : jperNotFound;
 }
 
-<<<<<<< HEAD
-static JsonbValue *
-copyJsonbValue(JsonbValue *src)
-{
-	JsonbValue	*dst = palloc(sizeof(*dst));
-
-	*dst = *src;
-
-	return dst;
-}
-
 /*
  * Execute next jsonpath item if it does exist.
  */
-=======
->>>>>>> 6491ccf... Export jsonpath execution functions and structures
 static inline JsonPathExecResult
 recursiveExecuteNext(JsonPathExecContext *cxt,
 					 JsonPathItem *cur, JsonPathItem *next,
@@ -1378,6 +1324,124 @@ tryToParseDatetime(const char *template, text *datetime,
 	PG_END_TRY();
 
 	return ok;
+}
+
+typedef struct JsonPathFuncCache
+{
+	FmgrInfo	finfo;
+	JsonPathItem *args;
+	void	  **argscache;
+} JsonPathFuncCache;
+
+static JsonPathFuncCache *
+prepareFunctionCache(JsonPathExecContext *cxt, JsonPathItem *jsp)
+{
+	MemoryContext oldcontext;
+	JsonPathFuncCache *cache = cxt->cache[jsp->content.func.id];
+	List	   *funcname = list_make1(makeString(jsp->content.func.name));
+	Oid			argtypes[] = { JSONPATH_FCXTOID, JSONXOID };
+	Oid			funcid;
+	int32		i;
+
+	if (cache)
+		return cache;
+
+	funcid = LookupFuncName(funcname,
+							sizeof(argtypes) / sizeof(argtypes[0]), argtypes,
+							false);
+
+	if (get_func_rettype(funcid) != INT8OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("return type of jsonpath item function %s is not %s",
+						 NameListToString(funcname), format_type_be(INT8OID))));
+
+	oldcontext = MemoryContextSwitchTo(cxt->cache_mcxt);
+
+	cache = cxt->cache[jsp->content.func.id] = palloc0(sizeof(*cache));
+
+	fmgr_info(funcid, &cache->finfo);
+
+	cache->args = palloc(sizeof(*cache->args) * jsp->content.func.nargs);
+	cache->argscache = palloc0(sizeof(*cache->argscache) *
+							   jsp->content.func.nargs);
+
+	for (i = 0; i < jsp->content.func.nargs; i++)
+		jspGetFunctionArg(jsp, i, &cache->args[i]);
+
+	MemoryContextSwitchTo(oldcontext);
+
+	return cache;
+}
+
+static JsonPathExecResult
+executeFunction(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
+				JsonValueList *result, bool needBool)
+{
+	JsonPathFuncCache *cache = prepareFunctionCache(cxt, jsp);
+	JsonPathFuncContext fcxt;
+	JsonValueList tmpres = { 0 };
+	JsonValueListIterator tmpiter = { 0 };
+	JsonPathExecResult res;
+	JsonbValue *jbvitem;
+
+	fcxt.cxt = cxt;
+	fcxt.funcname = jsp->content.func.name;
+	fcxt.jb = jb;
+	fcxt.result = jspHasNext(jsp) ? &tmpres : result;
+	fcxt.args = cache->args;
+	fcxt.argscache = cache->argscache;
+	fcxt.nargs = jsp->content.func.nargs;
+
+	if (jsp->type == jpiMethod)
+	{
+		JsonValueList items = { 0 };
+		JsonValueListIterator iter = { 0 };
+
+		/* skip first item argument */
+		fcxt.args++;
+		fcxt.argscache++;
+		fcxt.nargs--;
+
+		res = recursiveExecute(cxt, &cache->args[0], jb, &items);
+
+		if (jperIsError(res))
+			return res;
+
+		while ((jbvitem = JsonValueListNext(&items, &iter)))
+		{
+			fcxt.item = jbvitem;
+
+			res = DatumGetInt64(FunctionCall2(&cache->finfo,
+											  PointerGetDatum(&fcxt),
+											  PointerGetDatum(NULL)));
+			if (jperIsError(res))
+				return res;
+		}
+	}
+	else
+	{
+		fcxt.item = NULL;
+
+		res = DatumGetInt64(FunctionCall2(&cache->finfo,
+										  PointerGetDatum(&fcxt),
+										  PointerGetDatum(NULL)));
+		if (jperIsError(res))
+			return res;
+	}
+
+	if (!jspHasNext(jsp))
+		return res;
+
+	while ((jbvitem = JsonValueListNext(&tmpres, &tmpiter)))
+	{
+		res = recursiveExecuteNext(cxt, jsp, NULL, jbvitem, result, needBool);
+
+		if (jperIsError(res))
+			return res;
+	}
+
+	return res;
 }
 
 /*
@@ -2673,6 +2737,10 @@ recursiveExecuteNoUnwrap(JsonPathExecContext *cxt, JsonPathItem *jsp,
 		case jpiLambda:
 			elog(ERROR, "unable to directly execute jsonpath lambda expression");
 			break;
+		case jpiMethod:
+		case jpiFunction:
+			res = executeFunction(cxt, jsp, jb, found, needBool);
+			break;
 		default:
 			elog(ERROR, "unrecognized jsonpath item type: %d", jsp->type);
 	}
@@ -2783,18 +2851,15 @@ wrapItem(JsonbValue *jbv)
 	return JsonbWrapInBinary(jbv, NULL);
 }
 
-<<<<<<< HEAD
-/*
- * Execute jsonpath with automatic unwrapping of current item in lax mode.
- */
-=======
 JsonbValue *
 JsonbWrapItemInArray(JsonbValue *item)
 {
 	return wrapItem(item);
 }
 
->>>>>>> 6491ccf... Export jsonpath execution functions and structures
+/*
+ * Execute jsonpath with automatic unwrapping of current item in lax mode.
+ */
 static inline JsonPathExecResult
 recursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 				 JsonValueList *found)
@@ -2828,15 +2893,6 @@ recursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 	return recursiveExecuteNoUnwrap(cxt, jsp, jb, found, false);
 }
 
-<<<<<<< HEAD
-/*
- * Execute boolean-valued jsonpath expression.  Boolean items are not appended
- * to the result list, only return code determines result:
- *  - jperOk => true
- *  - jperNotFound => false
- *  - jperError => NULL (errors are converted to NULL values)
- */
-=======
 JsonPathExecResult
 jspRecursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 					JsonValueList *found)
@@ -2844,7 +2900,13 @@ jspRecursiveExecute(JsonPathExecContext *cxt, JsonPathItem *jsp, JsonbValue *jb,
 	return recursiveExecute(cxt, jsp, jb, found);
 }
 
->>>>>>> 6491ccf... Export jsonpath execution functions and structures
+/*
+ * Execute boolean-valued jsonpath expression.  Boolean items are not appended
+ * to the result list, only return code determines result:
+ *  - jperOk => true
+ *  - jperNotFound => false
+ *  - jperError => NULL (errors are converted to NULL values)
+ */
 static inline JsonPathExecResult
 recursiveExecuteBool(JsonPathExecContext *cxt, JsonPathItem *jsp,
 					 JsonbValue *jb)
@@ -2892,6 +2954,7 @@ executeJsonPath(JsonPath *path, List *vars, Jsonb *json,
 	jspInit(&jsp, path);
 
 	cxt.vars = vars;
+	cxt.args = NULL;
 	cxt.lax = (path->header & JSONPATH_LAX) != 0;
 	cxt.root = JsonbInitBinary(&jbv, json);
 	cxt.stack = NULL;

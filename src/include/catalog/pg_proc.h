@@ -5603,6 +5603,11 @@ DESCR("implementation of @~ operator");
 DATA(insert OID =  6069 (  jsonpath_predicate	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 16 "114 6050 114" _null_ _null_ _null_ _null_ _null_ json_jsonpath_predicate3 _null_ _null_ _null_ ));
 DESCR("jsonpath predicate test");
 
+DATA(insert OID = 6109  (  jsonpath_fcxt_in		PGNSP PGUID 12 1 0 0 0 f f f f f f i s 1 0 6103 "2275" _null_ _null_ _null_ _null_ _null_ jsonpath_fcxt_in _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 6116  (  jsonpath_fcxt_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "6103" _null_ _null_ _null_ _null_ _null_ jsonpath_fcxt_out _null_ _null_ _null_ ));
+DESCR("I/O");
+
 DATA(insert OID =  6077 (  jsonpath_eq_jsonpath PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 6050 "6050 6050" _null_ _null_ _null_ _null_ _null_ jsonpath_eq_jsonpath _null_ _null_ _null_ ));
 DESCR("implementation of == operator");
 DATA(insert OID =  6078 (  jsonpath_ne_jsonpath PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 6050 "6050 6050" _null_ _null_ _null_ _null_ _null_ jsonpath_ne_jsonpath _null_ _null_ _null_ ));
