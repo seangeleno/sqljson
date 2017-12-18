@@ -1,0 +1,433 @@
+CREATE EXTENSION jsonpathx;
+-- map item method
+select json '1' @* 'strict $.map(x => x + 10)';
+ERROR:  SQL/JSON array not found
+select json '1' @* 'lax $.map(x => x + 10)';
+ ?column? 
+----------
+ 11
+(1 row)
+
+select json '[1, 2, 3]' @* '$.map(x => x + 10)';
+   ?column?   
+--------------
+ [11, 12, 13]
+(1 row)
+
+select json '[1, 2, 3]' @* '$.map(x => x + 10)[*]';
+ ?column? 
+----------
+ 11
+ 12
+ 13
+(3 rows)
+
+select json '[[1, 2], [3, 4, 5], [], [6, 7]]' @* '$.map(a => a.map(x => x + 10))';
+                ?column?                
+----------------------------------------
+ [[11, 12], [13, 14, 15], [], [16, 17]]
+(1 row)
+
+select json '[[1, 2], [3, 4, 5], [], [6, 7]]' @* '$.flatmap(a => a.map(a => a + 10))';
+           ?column?           
+------------------------------
+ [11, 12, 13, 14, 15, 16, 17]
+(1 row)
+
+-- map function
+select json '1' @* 'strict map($, x => x + 10)';
+ ?column? 
+----------
+ 11
+(1 row)
+
+select json '1' @* 'lax map($, x => x + 10)';
+ ?column? 
+----------
+ 11
+(1 row)
+
+select json '[1, 2, 3]' @* 'map($[*], x => x + 10)';
+ ?column? 
+----------
+ 11
+ 12
+ 13
+(3 rows)
+
+select json '[[1, 2], [3, 4, 5], [], [6, 7]]' @* 'map($[*], x => [map(x[*], x => x + 10)])';
+   ?column?   
+--------------
+ [11, 12]
+ [13, 14, 15]
+ []
+ [16, 17]
+(4 rows)
+
+select json '[[1, 2], [3, 4, 5], [], [6, 7]]' @* 'flatmap($[*], a => map(a[*], x => x + 10))';
+ ?column? 
+----------
+ 11
+ 12
+ 13
+ 14
+ 15
+ 16
+ 17
+(7 rows)
+
+-- reduce/fold item methods
+select json '1' @* 'strict $.reduce((x, y) => x + y)';
+ERROR:  SQL/JSON array not found
+select json '1' @* 'lax $.reduce((x, y) => x + y)';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '1' @* 'strict $.fold((x, y) => x + y, 10)';
+ERROR:  SQL/JSON array not found
+select json '1' @* 'lax $.fold((x, y) => x + y, 10)';
+ ?column? 
+----------
+ 11
+(1 row)
+
+select json '[1, 2, 3]' @* '$.reduce((x, y) => x + y)';
+ ?column? 
+----------
+ 6
+(1 row)
+
+select json '[1, 2, 3]' @* '$.fold((x, y) => x + y, 100)';
+ ?column? 
+----------
+ 106
+(1 row)
+
+select json '[]' @* '$.reduce((x, y) => x + y)';
+ ?column? 
+----------
+(0 rows)
+
+select json '[]' @* '$.fold((x, y) => x + y, 100)';
+ ?column? 
+----------
+ 100
+(1 row)
+
+select json '[1]' @* '$.reduce((x, y) => x + y)';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[1, 2, 3]' @* '$.foldl((x, y) => [x, y], [])';
+     ?column?      
+-------------------
+ [[[[], 1], 2], 3]
+(1 row)
+
+select json '[1, 2, 3]' @* '$.foldr((x, y) => [y, x], [])';
+     ?column?      
+-------------------
+ [[[[], 3], 2], 1]
+(1 row)
+
+select json '[[1, 2], [3, 4, 5], [], [6, 7]]' @* '$.fold((x, y) => x + y.fold((a, b) => a + b, 100), 1000)';
+ ?column? 
+----------
+ 1428
+(1 row)
+
+-- reduce/fold functions
+select json '1' @* 'strict reduce($, (x, y) => x + y)';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '1' @* 'lax reduce($, (x, y) => x + y)';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '1' @* 'strict fold($, (x, y) => x + y, 10)';
+ ?column? 
+----------
+ 11
+(1 row)
+
+select json '1' @* 'lax fold($, (x, y) => x + y, 10)';
+ ?column? 
+----------
+ 11
+(1 row)
+
+select json '[1, 2, 3]' @* 'reduce($[*], (x, y) => x + y)';
+ ?column? 
+----------
+ 6
+(1 row)
+
+select json '[1, 2, 3]' @* 'fold($[*], (x, y) => x + y, 100)';
+ ?column? 
+----------
+ 106
+(1 row)
+
+select json '[]' @* 'reduce($[*], (x, y) => x + y)';
+ ?column? 
+----------
+(0 rows)
+
+select json '[]' @* 'fold($[*], (x, y) => x + y, 100)';
+ ?column? 
+----------
+ 100
+(1 row)
+
+select json '[1]' @* 'reduce($[*], (x, y) => x + y)';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[1, 2, 3]' @* 'foldl($[*], (x, y) => [x, y], [])';
+     ?column?      
+-------------------
+ [[[[], 1], 2], 3]
+(1 row)
+
+select json '[1, 2, 3]' @* 'foldr($[*], (x, y) => [y, x], [])';
+     ?column?      
+-------------------
+ [[[[], 3], 2], 1]
+(1 row)
+
+select json '[[1, 2], [3, 4, 5], [], [6, 7]]' @* 'fold($[*], (x, y) => x + y.fold((a, b) => a + b, 100), 1000)';
+ ?column? 
+----------
+ 1428
+(1 row)
+
+-- min/max item methods
+select json '1' @* 'strict $.min()';
+ERROR:  SQL/JSON array not found
+select json '1' @* 'lax $.min()';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[]' @* '$.min()';
+ ?column? 
+----------
+(0 rows)
+
+select json '[]' @* '$.max()';
+ ?column? 
+----------
+(0 rows)
+
+select json '[null]' @* '$.min()';
+ ?column? 
+----------
+ null
+(1 row)
+
+select json '[null]' @* '$.max()';
+ ?column? 
+----------
+ null
+(1 row)
+
+select json '[1, 2, 3]' @* '$.min()';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[1, 2, 3]' @* '$.max()';
+ ?column? 
+----------
+ 3
+(1 row)
+
+select json '[2, 3, 5, null, 1, 4, null]' @* '$.min()';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[2, 3, 5, null, 1, 4, null]' @* '$.max()';
+ ?column? 
+----------
+ 5
+(1 row)
+
+select json '["aa", null, "a", "bbb"]' @* '$.min()';
+ ?column? 
+----------
+ "a"
+(1 row)
+
+select json '["aa", null, "a", "bbb"]' @* '$.max()';
+ ?column? 
+----------
+ "bbb"
+(1 row)
+
+select json '[1, null, "2"]' @* '$.max()';
+ERROR:  SQL/JSON scalar required
+-- min/max functions
+select json '1' @* 'strict min($)';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '1' @* 'lax min($)';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[]' @* 'min($[*])';
+ ?column? 
+----------
+(0 rows)
+
+select json '[]' @* 'max($[*])';
+ ?column? 
+----------
+(0 rows)
+
+select json '[null]' @* 'min($[*])';
+ ?column? 
+----------
+ null
+(1 row)
+
+select json '[null]' @* 'max($[*])';
+ ?column? 
+----------
+ null
+(1 row)
+
+select json '[1, 2, 3]' @* 'min($[*])';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[1, 2, 3]' @* 'max($[*])';
+ ?column? 
+----------
+ 3
+(1 row)
+
+select json '[2, 3, 5, null, 1, 4, null]' @* 'min($[*])';
+ ?column? 
+----------
+ 1
+(1 row)
+
+select json '[2, 3, 5, null, 1, 4, null]' @* 'max($[*])';
+ ?column? 
+----------
+ 5
+(1 row)
+
+select json '["aa", null, "a", "bbb"]' @* 'min($[*])';
+ ?column? 
+----------
+ "a"
+(1 row)
+
+select json '["aa", null, "a", "bbb"]' @* 'max($[*])';
+ ?column? 
+----------
+ "bbb"
+(1 row)
+
+select json '[1, null, "2"]' @* 'max($[*])';
+ERROR:  SQL/JSON scalar required
+-- tests for simplified variable-based lambda syntax
+select json '[1, 2, 3]' @* '$.map($1 + 100)';
+    ?column?     
+-----------------
+ [101, 102, 103]
+(1 row)
+
+select json '[1, 2, 3]' @* 'map($[*], $1 + 100)';
+ ?column? 
+----------
+ 101
+ 102
+ 103
+(3 rows)
+
+select json '[1, 2, 3]' @* '$.reduce($1 + $2)';
+ ?column? 
+----------
+ 6
+(1 row)
+
+select json '[1, 2, 3]' @* 'reduce($[*], $1 + $2)';
+ ?column? 
+----------
+ 6
+(1 row)
+
+select json '[1, 2, 3]' @* '$.fold($1 + $2, 100)';
+ ?column? 
+----------
+ 106
+(1 row)
+
+select json '[1, 2, 3]' @* 'fold($[*], $1 + $2, 100)';
+ ?column? 
+----------
+ 106
+(1 row)
+
+-- more complex tests
+select json '[0,1,2,3,4,5,6,7,8,9]' @* '$.map((x,i,a) => {n: i, sum: reduce(a[0 to i], (x,y) => x + y)})[*]';
+      ?column?       
+---------------------
+ {"n": 0, "sum": 0}
+ {"n": 1, "sum": 1}
+ {"n": 2, "sum": 3}
+ {"n": 3, "sum": 6}
+ {"n": 4, "sum": 10}
+ {"n": 5, "sum": 15}
+ {"n": 6, "sum": 21}
+ {"n": 7, "sum": 28}
+ {"n": 8, "sum": 36}
+ {"n": 9, "sum": 45}
+(10 rows)
+
+select json '[0,1,2,3,4,5,6,7,8,9]' @* '$.fold((x,y,i,a) => [x[*], {n:y, s: [a[0 to i]].reduce($1+$2)}], [])[*]';
+     ?column?      
+-------------------
+ {"n": 0, "s": 0}
+ {"n": 1, "s": 1}
+ {"n": 2, "s": 3}
+ {"n": 3, "s": 6}
+ {"n": 4, "s": 10}
+ {"n": 5, "s": 15}
+ {"n": 6, "s": 21}
+ {"n": 7, "s": 28}
+ {"n": 8, "s": 36}
+ {"n": 9, "s": 45}
+(10 rows)
+
+select json '[0,1,2,3,4,5,6,7,8,9]' @* '$.fold((x,y) => [y,y,y].map((a) => a + y).reduce((x,y)=>x+y) + x * 100, 0)';
+     ?column?      
+-------------------
+ 61218243036424854
+(1 row)
+
+DROP EXTENSION jsonpathx;
