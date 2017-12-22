@@ -95,6 +95,8 @@ typedef enum JsonPathItemType {
 		jpiArray,
 		jpiObject,
 		jpiObjectField,
+		jpiLambda,
+		jpiArgument,
 
 		jpiBinary = 0xFF /* for jsonpath operators implementation only */
 } JsonPathItemType;
@@ -194,6 +196,13 @@ typedef struct JsonPathItem {
 			int32		patternlen;
 			uint32		flags;
 		} like_regex;
+
+		struct {
+			int32		id;
+			int32	   *params;
+			int32		nparams;
+			int32		expr;
+		} lambda;
 	} content;
 } JsonPathItem;
 
@@ -214,6 +223,9 @@ extern bool jspGetArraySubscript(JsonPathItem *v, JsonPathItem *from,
 extern void jspGetSequenceElement(JsonPathItem *v, int i, JsonPathItem *elem);
 extern void jspGetObjectField(JsonPathItem *v, int i,
 							  JsonPathItem *key, JsonPathItem *val);
+extern JsonPathItem *jspGetLambdaParam(JsonPathItem *func, int index,
+				  JsonPathItem *arg);
+extern JsonPathItem *jspGetLambdaExpr(JsonPathItem *lambda, JsonPathItem *expr);
 
 /*
  * Parsing
@@ -273,6 +285,11 @@ struct JsonPathParseItem {
 		} current;
 
 		JsonPath   *binary;
+
+		struct {
+			List   *params;
+			JsonPathParseItem *expr;
+		} lambda;
 
 		/* scalars */
 		Numeric		numeric;
@@ -346,9 +363,18 @@ typedef struct JsonItemStackEntry
 
 typedef JsonItemStackEntry *JsonItemStack;
 
+typedef struct JsonLambdaArg
+{
+	struct JsonLambdaArg *next;
+	JsonbValue *val;
+	const char *name;
+	int			namelen;
+} JsonLambdaArg;
+
 typedef struct JsonPathExecContext
 {
 	List	   *vars;
+	JsonLambdaArg *args;
 	bool		lax;
 	JsonbValue *root;				/* for $ evaluation */
 	JsonItemStack stack;			/* for @N evaluation */
@@ -527,6 +553,10 @@ extern JsonPathExecResult jspRecursiveExecute(JsonPathExecContext *cxt,
 extern JsonPathExecResult jspRecursiveExecuteNested(JsonPathExecContext *cxt,
 						  JsonPathItem *jsp, JsonbValue *jb,
 						  JsonValueList *found);
+extern JsonPathExecResult jspRecursiveExecuteLambda(JsonPathExecContext *cxt,
+						  JsonPathItem *jsp, JsonbValue *jb,
+						  JsonValueList *found,
+						  JsonbValue **params, int nparams, void **pcache);
 extern JsonPathExecResult jspCompareItems(int32 op, JsonbValue *jb1,
 				JsonbValue *jb2);
 

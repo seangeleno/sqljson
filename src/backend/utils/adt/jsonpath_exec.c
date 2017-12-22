@@ -108,6 +108,8 @@ static JsonTableJoinState *JsonTableInitPlanState(JsonTableContext *cxt,
 
 static bool JsonTableNextRow(JsonTableScanState *scan);
 
+static Datum returnDATUM(void *arg, bool *isNull);
+
 void
 JsonValueListConcat(JsonValueList *jvl1, JsonValueList jvl2)
 {
@@ -311,6 +313,30 @@ computeJsonPathItem(JsonPathExecContext *cxt, JsonPathItem *item, JsonbValue *va
 			break;
 		case jpiVariable:
 			computeJsonPathVariable(item, cxt->vars, value);
+			break;
+		case jpiArgument:
+			{
+				JsonLambdaArg *arg;
+				char	   *argname;
+				int			argnamelen;
+
+				argname = jspGetString(item, &argnamelen);
+
+				for (arg = cxt->args; arg; arg = arg->next)
+				{
+					if (arg->namelen == argnamelen &&
+						!strncmp(arg->name, argname, argnamelen))
+					{
+						*value = *arg->val;
+						return;
+					}
+				}
+
+				ereport(ERROR,
+						(errcode(ERRCODE_NO_DATA_FOUND),
+						 errmsg("could not find '%s' lambda variable",
+								pnstrdup(argname, argnamelen))));
+			}
 			break;
 		default:
 			elog(ERROR, "Wrong type");
@@ -1415,6 +1441,138 @@ jspRecursiveExecuteNested(JsonPathExecContext *cxt, JsonPathItem *jsp,
 	return recursiveExecuteNested(cxt, jsp, jb, found);
 }
 
+typedef union JsonLambdaCache
+{
+	JsonLambdaArg *args;
+	JsonPathVariable *vars;
+} JsonLambdaCache;
+
+static JsonPathExecResult
+recursiveExecuteLambdaVars(JsonPathExecContext *cxt, JsonPathItem *jsp,
+						   JsonbValue *jb, JsonValueList *found,
+						   JsonbValue **params, int nparams, void **pcache)
+{
+	JsonLambdaCache *cache = *pcache;
+	JsonPathExecResult res;
+	int			i;
+
+	if (nparams > 0 && !cache)
+	{
+		MemoryContext oldcontext = MemoryContextSwitchTo(cxt->cache_mcxt);
+
+		cache = *pcache = palloc0(sizeof(*cache));
+
+		cache->vars = palloc(sizeof(*cache->vars) * nparams);
+
+		for (i = 0; i < nparams; i++)
+		{
+			JsonPathVariable *var = &cache->vars[i];
+			char		varname[20];
+
+			snprintf(varname, sizeof(varname), "%d", i + 1);
+
+			var->cb = returnDATUM;
+			var->varName = cstring_to_text(varname);
+			var->typid = (Oid) -1; /* raw JsonbValue */
+			var->typmod = -1;
+		}
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	for (i = 0; i < nparams; i++)
+	{
+		cache->vars[i].cb_arg = params[i];
+		cxt->vars = lcons(&cache->vars[i], cxt->vars);
+	}
+
+	res = found
+		? recursiveExecute(cxt, jsp, jb, found)
+		: recursiveExecuteBool(cxt, jsp, jb);
+
+	for (i = 0; i < nparams; i++)
+		cxt->vars = list_delete_first(cxt->vars);
+
+	return res;
+}
+
+static inline JsonPathExecResult
+recursiveExecuteLambdaExpr(JsonPathExecContext *cxt, JsonPathItem *jsp,
+						   JsonbValue *jb, JsonValueList *found,
+						   JsonbValue **params, int nparams, void **pcache)
+{
+	JsonPathItem expr;
+	JsonPathExecResult res;
+	JsonLambdaCache *cache = *pcache;
+	JsonLambdaArg *oldargs;
+	int			i;
+
+	if (jsp->content.lambda.nparams > nparams)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("jsonpath lambda arguments mismatch: expected %d but given %d",
+						jsp->content.lambda.nparams, nparams)));
+
+	if (jsp->content.lambda.nparams > 0 && !cache)
+	{
+		MemoryContext oldcontext = MemoryContextSwitchTo(cxt->cache_mcxt);
+
+		cache = *pcache = palloc0(sizeof(*cache));
+		cache->args = palloc(sizeof(cache->args[0]) *
+							 jsp->content.lambda.nparams);
+
+		for (i = 0; i < jsp->content.lambda.nparams; i++)
+		{
+			JsonLambdaArg *arg = &cache->args[i];
+			JsonPathItem argname;
+
+			jspGetLambdaParam(jsp, i, &argname);
+
+			if (argname.type != jpiArgument)
+				elog(ERROR, "invalid jsonpath lambda argument item type: %d",
+					 argname.type);
+
+			arg->name = jspGetString(&argname, &arg->namelen);
+			arg->val = NULL;
+			arg->next = arg + 1;
+		}
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	oldargs = cxt->args;
+
+	if (jsp->content.lambda.nparams > 0)
+	{
+		for (i = 0; i < jsp->content.lambda.nparams; i++)
+			cache->args[i].val = params[i];
+
+		cache->args[jsp->content.lambda.nparams - 1].next = oldargs;
+		cxt->args = &cache->args[0];
+	}
+
+	jspGetLambdaExpr(jsp, &expr);
+
+	/* found == NULL is used here when executing boolean filter expressions */
+	res = found
+		? recursiveExecute(cxt, &expr, jb, found)
+		: recursiveExecuteBool(cxt, &expr, jb);
+
+	cxt->args = oldargs;
+
+	return res;
+}
+
+JsonPathExecResult
+jspRecursiveExecuteLambda(JsonPathExecContext *cxt, JsonPathItem *jsp,
+						  JsonbValue *jb, JsonValueList *res,
+						  JsonbValue **params, int nparams, void **cache)
+{
+	return jsp->type == jpiLambda
+		? recursiveExecuteLambdaExpr(cxt, jsp, jb, res, params, nparams, cache)
+		: recursiveExecuteLambdaVars(cxt, jsp, jb, res, params, nparams, cache);
+}
+
 /*
  * Main executor function: walks on jsonpath structure and tries to find
  * correspoding parts of jsonb. Note, jsonb and jsonpath values should be
@@ -2017,6 +2175,7 @@ recursiveExecuteNoUnwrap(JsonPathExecContext *cxt, JsonPathItem *jsp,
 		case jpiNumeric:
 		case jpiString:
 		case jpiVariable:
+		case jpiArgument:
 			{
 				JsonbValue	vbuf;
 				JsonbValue *v;
@@ -2510,6 +2669,9 @@ recursiveExecuteNoUnwrap(JsonPathExecContext *cxt, JsonPathItem *jsp,
 
 				res = recursiveExecuteNext(cxt, jsp, NULL, obj, found, false);
 			}
+			break;
+		case jpiLambda:
+			elog(ERROR, "unable to directly execute jsonpath lambda expression");
 			break;
 		default:
 			elog(ERROR, "unrecognized jsonpath item type: %d", jsp->type);

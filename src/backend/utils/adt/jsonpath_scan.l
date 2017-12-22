@@ -93,6 +93,8 @@ unicode		\\u[0-9A-Fa-f]{4}
 
 <INITIAL>\>						{ return GREATER_P; }
 
+<INITIAL>\=\>					{ return ARROW_P; }
+
 <INITIAL>\${any}+				{
 									addstring(true, yytext + 1, yyleng - 1);
 									addchar(false, '\0');

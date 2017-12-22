@@ -95,6 +95,7 @@
 #define JsonValueListConcat JsonValueListConcatJson
 #define jspRecursiveExecute jspRecursiveExecuteJson
 #define jspRecursiveExecuteNested jspRecursiveExecuteNestedJson
+#define jspRecursiveExecuteLambda jspRecursiveExecuteLambdaJson
 #define jspCompareItems jspCompareItemsJson
 
 static inline JsonbValue *
