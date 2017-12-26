@@ -33,6 +33,7 @@
 #include "port/atomics.h"
 #include "utils/builtins.h"
 #include "utils/geo_decls.h"
+#include "utils/jsonpath.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
 #include "utils/memutils.h"
@@ -1102,4 +1103,153 @@ Datum
 test_fdw_handler(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_NULL();
+}
+
+PG_FUNCTION_INFO_V1(jsonpath_array_map);
+Datum
+jsonpath_array_map(PG_FUNCTION_ARGS)
+{
+	JsonPathFuncContext *fcxt = (JsonPathFuncContext *) PG_GETARG_POINTER(0);
+	JsonPathExecContext *cxt = fcxt->cxt;
+	JsonbValue *jb = fcxt->item;
+	JsonPathItem *func = &fcxt->args[jb ? 0 : 1];
+	void	   **funccache = &fcxt->argscache[jb ? 0 : 1];
+	JsonPathExecResult res;
+	JsonbValue *args[3];
+	JsonbValue	jbvidx;
+	int			index = 0;
+	int			nargs = 1;
+
+	if (fcxt->nargs != (jb ? 1 : 2))
+		PG_RETURN_INT64(jperMakeError(ERRCODE_JSON_SCALAR_REQUIRED));
+
+	if (func->type == jpiLambda && func->content.lambda.nparams > 1)
+	{
+		args[nargs++] = &jbvidx;
+		jbvidx.type = jbvNumeric;
+	}
+
+	if (!jb)
+	{
+		JsonValueList items = { 0 };
+		JsonValueListIterator iter = { 0 };
+		JsonbValue *item;
+
+		res = jspRecursiveExecute(cxt, &fcxt->args[0], fcxt->jb, &items);
+
+		if (jperIsError(res))
+			PG_RETURN_INT64(res);
+
+		while ((item = JsonValueListNext(&items, &iter)))
+		{
+			JsonValueList reslist = { 0 };
+
+			args[0] = item;
+
+			if (nargs > 1)
+			{
+				jbvidx.val.numeric = DatumGetNumeric(
+					DirectFunctionCall1(int4_numeric, Int32GetDatum(index)));
+				index++;
+			}
+
+			res = jspRecursiveExecuteLambda(cxt, func, fcxt->jb, &reslist,
+											args, nargs, funccache);
+
+			if (jperIsError(res))
+				PG_RETURN_INT64(res);
+
+			if (JsonValueListLength(&reslist) != 1)
+				PG_RETURN_INT64(jperMakeError(ERRCODE_SINGLETON_JSON_ITEM_REQUIRED));
+
+			JsonValueListAppend(fcxt->result, JsonValueListHead(&reslist));
+		}
+	}
+	else if (JsonbType(jb) != jbvArray)
+	{
+		JsonValueList reslist = { 0 };
+
+		if (!cxt->lax)
+			PG_RETURN_INT64(jperMakeError(ERRCODE_JSON_ARRAY_NOT_FOUND));
+
+		args[0] = jb;
+
+		if (nargs > 1)
+			jbvidx.val.numeric = DatumGetNumeric(
+				DirectFunctionCall1(int4_numeric, Int32GetDatum(0)));
+
+		res = jspRecursiveExecuteLambda(cxt, func, jb, &reslist, args,
+										nargs, funccache);
+
+		if (jperIsError(res))
+			PG_RETURN_INT64(res);
+
+		if (JsonValueListLength(&reslist) != 1)
+			PG_RETURN_INT64(jperMakeError(ERRCODE_SINGLETON_JSON_ITEM_REQUIRED));
+
+		JsonValueListAppend(fcxt->result, JsonValueListHead(&reslist));
+	}
+	else
+	{
+		JsonbValue	elembuf;
+		JsonbValue *elem;
+		JsonbIterator *it = NULL;
+		JsonbIteratorToken tok;
+		JsonValueList result = { 0 };
+		int			size = JsonbArraySize(jb);
+		int			i;
+
+		if (jb->type == jbvBinary && size > 0)
+		{
+			elem = &elembuf;
+			it = JsonbIteratorInit(jb->val.binary.data);
+			tok = JsonbIteratorNext(&it, &elembuf, false);
+			if (tok != WJB_BEGIN_ARRAY)
+				elog(ERROR, "unexpected jsonb token at the array start");
+		}
+
+		if (nargs > 1)
+		{
+			nargs = 3;
+			args[2] = jb;
+		}
+
+		for (i = 0; i < size; i++)
+		{
+			JsonValueList reslist = { 0 };
+
+			if (it)
+			{
+				tok = JsonbIteratorNext(&it, elem, true);
+				if (tok != WJB_ELEM)
+					break;
+			}
+			else
+				elem = &jb->val.array.elems[i];
+
+			args[0] = elem;
+
+			if (nargs > 1)
+			{
+				jbvidx.val.numeric = DatumGetNumeric(
+					DirectFunctionCall1(int4_numeric, Int32GetDatum(index)));
+				index++;
+			}
+
+			res = jspRecursiveExecuteLambda(cxt, func, jb, &reslist,
+											args, nargs, funccache);
+
+			if (jperIsError(res))
+				PG_RETURN_INT64(res);
+
+			if (JsonValueListLength(&reslist) != 1)
+				PG_RETURN_INT64(jperMakeError(ERRCODE_SINGLETON_JSON_ITEM_REQUIRED));
+
+			JsonValueListConcat(&result, reslist);
+		}
+
+		JsonValueListAppend(fcxt->result, JsonbWrapItemsInArray(&result));
+	}
+
+	PG_RETURN_INT64(jperOk);
 }

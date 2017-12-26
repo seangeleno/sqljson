@@ -60,6 +60,11 @@ CREATE FUNCTION test_fdw_handler()
     RETURNS fdw_handler
     AS '@libdir@/regress@DLSUFFIX@', 'test_fdw_handler'
     LANGUAGE C;
+-- Tests creating a custom jsonpath item method
+CREATE FUNCTION array_map(jsonpath_fcxt, jsonb)
+	RETURNS int8
+	AS '@libdir@/regress@DLSUFFIX@', 'jsonpath_array_map'
+	LANGUAGE C;
 -- Things that shouldn't work:
 CREATE FUNCTION test1 (int) RETURNS int LANGUAGE SQL
     AS 'SELECT ''not an integer'';';
