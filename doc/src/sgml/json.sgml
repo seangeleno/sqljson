@@ -569,4 +569,16 @@ SELECT jdoc-&gt;'guid', jdoc-&gt;'name' FROM api WHERE jdoc @&gt; '{"tags": ["qu
       compared using the default database collation.
   </para>
  </sect2>
+
+ <sect2 id="json-path">
+  <title><type>jsonpath</type></title>
+  <indexterm>
+    <primary>json</primary>
+    <secondary>path</secondary>
+  </indexterm>
+
+  <para>
+   TODO
+  </para>
+ </sect2>
 </sect1>
